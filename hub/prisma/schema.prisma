@@ -1,0 +1,807 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// App con đã đăng ký
+model App {
+  id           String   @id @default(cuid())
+  app_id       String   @unique              // "zalo-outreach", "video-creator"
+  name         String
+  version      String
+  description  String?
+  icon         String?
+  category     String?
+  base_url     String                        // "http://localhost:3010"
+  status       String   @default("active")   // active, degraded, offline, disabled
+  health_miss  Int      @default(0)          // consecutive health check misses
+  manifest_raw String?                       // full manifest JSON
+  last_health  DateTime?
+  registered_at DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  capabilities AppCapability[]
+  activity_logs ActivityLog[]
+
+  @@map("hub_apps")
+}
+
+// Capabilities từng app con (parse từ manifest)
+model AppCapability {
+  id             String  @id @default(cuid())
+  app_id         String
+  capability_id  String                      // "scan-group-members"
+  name           String
+  description    String?
+  category       String?                     // analysis, generation, management...
+  input_schema   String?                     // JSON Schema
+  output_schema  String?                     // JSON Schema
+  is_async       Boolean @default(false)
+  estimated_ms   Int?
+
+  app            App     @relation(fields: [app_id], references: [id], onDelete: Cascade)
+
+  @@unique([app_id, capability_id])
+  @@map("hub_app_capabilities")
+}
+
+// Lịch sử hoạt động Hub
+model ActivityLog {
+  id         String   @id @default(cuid())
+  type       String   @default("unknown")   // app_registered, capability_called, health_check, ai_decision
+  app_id     String?
+  details    String?                         // JSON
+  created_at DateTime @default(now())
+
+  app        App?     @relation(fields: [app_id], references: [id])
+
+  @@index([type])
+  @@index([created_at])
+  @@map("hub_activity_logs")
+}
+
+// ============================================
+// KNOWLEDGE BASE — Kho kiến thức trung tâm
+// Tất cả app con dùng chung, sync từ đây
+// ============================================
+model KnowledgeDoc {
+  id          String   @id @default(cuid())
+  category    String                       // identity | sales_script | product | faq | objection | policy | other
+  title       String
+  content     String
+  tags        String?                      // JSON array
+  keywords    String?                      // Từ khóa trigger, phân tách bằng dấu phẩy
+  priority    Int      @default(5)         // 1=luôn load, 10=chỉ khi match keyword
+  is_active   Boolean  @default(true)
+
+  // Scope: doc này dùng cho app nào? null = tất cả
+  scope       String?                      // null=all, "zalo-outreach", "email-campaign"...
+
+  // Versioning
+  version     Int      @default(1)         // Tăng mỗi lần sửa → app con biết cần sync
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([category, is_active])
+  @@index([scope, is_active])
+  @@index([version])
+  @@map("hub_knowledge_docs")
+}
+
+// Sync tracker: app con đã sync version nào
+model KnowledgeSync {
+  id          String   @id @default(cuid())
+  app_id      String                       // "zalo-outreach"
+  last_version Int     @default(0)         // Version cuối cùng đã sync
+  synced_at   DateTime @default(now())
+
+  @@unique([app_id])
+  @@map("hub_knowledge_sync")
+}
+
+// ============================================
+// WORKFLOW ENGINE — Chuỗi công việc tự động
+// ============================================
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String                       // "Auto Content Pipeline"
+  description String?
+  is_active   Boolean  @default(true)
+
+  // Trigger
+  trigger_type String  @default("manual")  // manual | cron | event | webhook
+  trigger_config String?                   // cron: "0 8 * * *", event: "zalo:lead-hot"
+
+  // Steps (JSON array)
+  // Mỗi step: { id, app_id, capability_id, input_template, on_error, depends_on }
+  steps       String                       // JSON array of WorkflowStep
+
+  // Error handling
+  on_error    String   @default("stop")    // stop | skip | retry
+  max_retries Int      @default(3)
+  notify_on_error Boolean @default(true)
+
+  // Stats
+  total_runs      Int  @default(0)
+  success_runs    Int  @default(0)
+  failed_runs     Int  @default(0)
+  last_run_at     DateTime?
+  avg_duration_ms Int?
+
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  runs        WorkflowRun[]
+  schedules   Schedule[]
+
+  @@map("hub_workflows")
+}
+
+// Mỗi lần workflow chạy
+model WorkflowRun {
+  id          String   @id @default(cuid())
+  workflow_id String
+
+  status      String   @default("running") // running | completed | failed | cancelled
+  trigger     String                       // manual | cron | event:xxx
+
+  // Step results (JSON array)
+  // Mỗi step: { step_id, status, output, error, duration_ms, started_at, completed_at }
+  step_results String?                     // JSON
+
+  // Current progress
+  current_step Int     @default(0)
+  total_steps  Int     @default(0)
+
+  // Timing
+  started_at   DateTime @default(now())
+  completed_at DateTime?
+  duration_ms  Int?
+
+  // Error
+  error_message String?
+  error_step_id String?
+
+  workflow    Workflow @relation(fields: [workflow_id], references: [id], onDelete: Cascade)
+
+  @@index([workflow_id, status])
+  @@index([started_at])
+  @@map("hub_workflow_runs")
+}
+
+// ============================================
+// SCHEDULER — Lịch trình tự động
+// ============================================
+model Schedule {
+  id          String   @id @default(cuid())
+  name        String
+  workflow_id String?                      // Gắn với workflow (nếu có)
+
+  // Cron
+  cron_expression String                   // "0 8 * * *" = 8h sáng mỗi ngày
+  timezone    String   @default("Asia/Ho_Chi_Minh")
+
+  // Status
+  is_active   Boolean  @default(true)
+  last_run_at DateTime?
+  next_run_at DateTime?
+  run_count   Int      @default(0)
+
+  // Error
+  consecutive_failures Int @default(0)
+  last_error  String?
+
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  workflow    Workflow? @relation(fields: [workflow_id], references: [id])
+
+  @@map("hub_schedules")
+}
+
+// ============================================
+// MONITOR — Giám sát + Alert
+// ============================================
+model MonitorAlert {
+  id          String   @id @default(cuid())
+  severity    String                       // info | warning | error | critical
+  source      String                       // app_id hoặc "hub"
+  title       String
+  message     String
+  details     String?                      // JSON
+
+  // Status
+  status      String   @default("open")    // open | acknowledged | resolved | auto_fixed
+  resolved_at DateTime?
+  resolved_by String?                      // "hub_auto" | "user"
+  resolution  String?                      // Cách đã fix
+
+  created_at  DateTime @default(now())
+
+  @@index([severity, status])
+  @@index([source, created_at])
+  @@map("hub_monitor_alerts")
+}
+
+// Health check history
+model HealthCheck {
+  id          String   @id @default(cuid())
+  app_id      String
+  status      String                       // healthy | degraded | offline
+  response_ms Int?
+  details     String?                      // JSON: { db, zalo_connection, etc }
+  checked_at  DateTime @default(now())
+
+  @@index([app_id, checked_at])
+  @@map("hub_health_checks")
+}
+
+// ============================================
+// DAILY REPORT — Báo cáo tổng hợp
+// ============================================
+model DailyReport {
+  id          String   @id @default(cuid())
+  report_date String   @unique            // "2026-04-01"
+  data        String                       // JSON: tổng hợp từ tất cả app con
+  // { zalo: { messages_sent, replies, hot_leads }, video: { created }, social: { posts } }
+  generated_at DateTime @default(now())
+
+  @@map("hub_daily_reports")
+}
+
+// ============================================
+// TOKEN USAGE — Tracking LLM token consumption
+// ============================================
+model TokenUsage {
+  id          String   @id @default(cuid())
+  app_id      String?                      // null = Hub itself
+  model       String                       // "deepseek-v3-2-251201", "kimi-k2.5"
+  provider    String   @default("byteplus") // byteplus | openai | anthropic
+
+  // Token counts
+  input_tokens    Int
+  output_tokens   Int
+  total_tokens    Int
+  cached_tokens   Int     @default(0)      // Cache hit tokens (80% cheaper)
+
+  // Cost (USD)
+  cost_usd    Float    @default(0)         // Tính theo bảng giá provider
+
+  // Context
+  purpose     String?                      // "zalo_reply" | "content_write" | "analysis" | "video_script"
+  conversation_id String?                  // Link to conversation if applicable
+
+  created_at  DateTime @default(now())
+
+  @@index([app_id, created_at])
+  @@index([model, created_at])
+  @@index([created_at])
+  @@map("hub_token_usage")
+}
+
+// Daily token summary
+model TokenDailySummary {
+  id          String   @id @default(cuid())
+  date        String                       // "2026-04-01"
+  app_id      String?                      // null = tất cả
+  model       String?                      // null = tất cả
+
+  total_requests  Int    @default(0)
+  total_input     Int    @default(0)
+  total_output    Int    @default(0)
+  total_tokens    Int    @default(0)
+  total_cost_usd  Float  @default(0)
+
+  @@unique([date, app_id, model])
+  @@map("hub_token_daily")
+}
+
+// ============================================
+// CONTENT PIPELINE — Lưu từng bước tạo content
+// ============================================
+
+// 1 "content project" = 1 bài viết/video từ đầu đến cuối
+model ContentProject {
+  id          String   @id @default(cuid())
+  title       String                       // "VibeVoice — Microsoft Open-Source Voice AI"
+  topic       String?                      // "AI", "coding", "tech"
+  source_url  String?                      // URL gốc: github.com/..., x.com/...
+  source_type String?                      // "github", "x.com", "huggingface", "manual"
+
+  status      String   @default("collecting")
+  // collecting     — Đang thu thập thông tin
+  // writing        — Đang viết bài
+  // designing      — Đang tạo ảnh
+  // video_creating — Đang tạo video
+  // publishing     — Đang đăng
+  // completed      — Xong tất cả
+  // failed         — Lỗi ở bước nào đó
+
+  // Workflow run nếu chạy tự động
+  workflow_run_id String?
+
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  steps       ContentStep[]
+
+  @@index([status])
+  @@index([source_type, created_at])
+  @@map("hub_content_projects")
+}
+
+// Mỗi bước trong pipeline
+model ContentStep {
+  id          String   @id @default(cuid())
+  project_id  String
+  step_order  Int                          // 1, 2, 3...
+  step_type   String                       // collect | analyze | write_article | write_seo | design_image | create_video | publish
+
+  // Status
+  status      String   @default("pending") // pending | running | completed | failed | skipped
+
+  // Input: data đầu vào cho bước này
+  input_data  String?                      // JSON
+
+  // Output: kết quả bước này (= input cho bước tiếp)
+  output_data String?                      // JSON
+  // collect → { raw_data, source, trending_score }
+  // analyze → { summary, key_points, hook, target_audience }
+  // write_article → { title, body, seo_keywords, hashtags }
+  // write_seo → { meta_title, meta_desc, slug, structured_data }
+  // design_image → { image_urls, og_image, thumbnail }
+  // create_video → { video_url, duration, voice_script }
+  // publish → { platform, post_url, post_id }
+
+  // App con nào xử lý
+  app_id      String?                      // "video-creator", "social-manager"
+  capability_id String?                    // capability đã gọi
+
+  // Error
+  error_message String?
+
+  // Timing
+  started_at  DateTime?
+  completed_at DateTime?
+  duration_ms Int?
+
+  project     ContentProject @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id, step_order])
+  @@map("hub_content_steps")
+}
+
+// ============================================
+// CRM — Quản lý khách hàng trung tâm
+// Tất cả app con dùng chung qua Hub API
+// ============================================
+
+// Khách hàng — 1 người = 1 record dù chat Zalo, Email, FB
+model CrmContact {
+  id              String    @id @default(cuid())
+
+  // === Thông tin cơ bản ===
+  display_name    String?                        // Tên hiển thị (từ Zalo, FB...)
+  full_name       String?                        // Họ tên đầy đủ (user nhập)
+  phone           String?                        // Số điện thoại
+  email           String?                        // Email
+  avatar_url      String?                        // Ảnh đại diện
+
+  // === ID trên các nền tảng ===
+  zalo_id         String?   @unique              // Zalo user ID
+  facebook_id     String?   @unique              // Facebook user ID
+  instagram_id    String?   @unique              // Instagram user ID
+  tiktok_id       String?   @unique              // TikTok user ID
+  linkedin_id     String?   @unique              // LinkedIn user ID
+  messenger_id    String?   @unique              // Messenger ID
+
+  // === Thông tin cá nhân ===
+  gender          String?                        // male | female | other | unknown
+  date_of_birth   DateTime?                      // Ngày sinh
+  age_range       String?                        // 18-24, 25-34, 35-44...
+  location_city   String?                        // Thành phố
+  location_province String?                      // Tỉnh
+  location_country String?  @default("VN")       // Quốc gia
+  address         String?                        // Địa chỉ chi tiết
+
+  // === Thông tin nghề nghiệp ===
+  company         String?                        // Công ty
+  job_title       String?                        // Chức vụ
+  industry        String?                        // Ngành nghề
+
+  // === Nguồn gốc ===
+  source          String    @default("unknown")  // zalo_group_scan | phone_import | manual | website | facebook_ad | referral
+  source_detail   String?                        // Tên nhóm Zalo, link quảng cáo, ai giới thiệu...
+  utm_source      String?                        // UTM tracking
+  utm_medium      String?
+  utm_campaign    String?
+
+  // === Lead scoring & Status ===
+  lead_status     String    @default("new")      // new | contacted | warm | hot | closed_won | closed_lost | unresponsive
+  interest_score  Int       @default(0)          // 0-100, AI tính toán
+  lead_quality    String?                        // A | B | C | D (chất lượng lead)
+  deal_value      Float?                         // Giá trị deal dự kiến (VND)
+  deal_stage      String?                        // awareness | interest | consideration | decision | purchase
+
+  // === Tương tác ===
+  first_contacted_at DateTime?                   // Lần nhắn đầu tiên
+  last_interaction_at DateTime?                  // Tương tác gần nhất (bất kỳ kênh)
+  last_message_at DateTime?                      // Tin nhắn gần nhất
+  last_reply_at   DateTime?                      // Lần khách reply gần nhất
+  total_messages_sent Int   @default(0)          // Tổng tin gửi đi
+  total_messages_received Int @default(0)        // Tổng tin nhận
+  total_interactions Int    @default(0)          // Tổng tương tác (gửi+nhận+click...)
+  response_rate   Float?                         // % reply / tin gửi
+  avg_response_time_ms Int?                      // Thời gian reply trung bình (ms)
+
+  // === Hành vi ===
+  preferred_channel String?                      // zalo | facebook | email | phone
+  preferred_time  String?                        // "morning" | "afternoon" | "evening"
+  language        String?  @default("vi")        // vi | en
+  timezone        String?  @default("Asia/Ho_Chi_Minh")
+
+  // === Sản phẩm quan tâm ===
+  interested_products String?                    // JSON array: ["chung_cu", "dat_nen", ...]
+  mentioned_keywords  String?                    // JSON array: từ khóa khách nhắc đến
+
+  // === Ghi chú & Tags ===
+  notes           String?                        // Ghi chú tự do
+  internal_notes  String?                        // Ghi chú nội bộ (khách không thấy)
+
+  // === Phân quyền (multi-tenant sau này) ===
+  tenant_id       String?                        // Khách hàng của tenant nào
+  assigned_to     String?                        // Nhân viên phụ trách
+  assigned_zalo_account_id String?               // Tài khoản Zalo nào phụ trách
+
+  // === Meta ===
+  is_blocked      Boolean   @default(false)      // Đã block / không liên hệ nữa
+  block_reason    String?
+  do_not_contact  Boolean   @default(false)      // Yêu cầu không liên hệ
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  // Relations
+  tags            CrmContactTag[]
+  sources         CrmContactSource[]
+  conversations   CrmConversation[]
+  campaign_contacts CrmCampaignContact[]
+  activities      CrmActivity[]
+  assigned_zalo_account CrmZaloAccount? @relation(fields: [assigned_zalo_account_id], references: [id])
+
+  @@index([lead_status])
+  @@index([assigned_zalo_account_id])
+  @@index([interest_score])
+  @@index([source])
+  @@index([phone])
+  @@index([zalo_id])
+  @@index([facebook_id])
+  @@index([email])
+  @@index([created_at])
+  @@index([last_interaction_at])
+  @@index([tenant_id, lead_status])
+  @@map("hub_crm_contacts")
+}
+
+// Nguồn gốc contact (1 contact có thể từ nhiều nguồn)
+model CrmContactSource {
+  id          String   @id @default(cuid())
+  contact_id  String
+  source_type String                             // zalo_group | phone_import | manual | website | ad
+  source_name String?                            // "Nhóm Chung cư Bắc Ninh", "Import 01/04/2026"
+  source_url  String?                            // Link nhóm Zalo, link quảng cáo
+  source_id   String?                            // Group ID, Campaign ID
+  imported_at DateTime @default(now())
+  metadata    String?                            // JSON: thông tin thêm
+
+  contact     CrmContact @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@index([contact_id])
+  @@index([source_type])
+  @@map("hub_crm_contact_sources")
+}
+
+// Tags cho contact (phân nhóm linh hoạt)
+model CrmContactTag {
+  id          String   @id @default(cuid())
+  contact_id  String
+  tag         String                             // "VIP", "chung_cu", "bac_ninh", "hot_lead"
+  added_at    DateTime @default(now())
+  added_by    String?                            // "hub_auto" | "user"
+
+  contact     CrmContact @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@unique([contact_id, tag])
+  @@index([tag])
+  @@map("hub_crm_contact_tags")
+}
+
+// Cuộc trò chuyện (1 contact có nhiều conversation trên nhiều kênh)
+model CrmConversation {
+  id              String    @id @default(cuid())
+  contact_id      String
+  channel         String                         // zalo | facebook | instagram | email | phone | website_chat
+  channel_conversation_id String?                // ID conversation trên nền tảng gốc
+
+  // Status
+  status          String    @default("active")   // active | paused | closed | archived
+  closed_reason   String?                        // resolved | unresponsive | spam | converted | user_closed
+
+  // Scoring cho conversation này
+  sentiment       String?                        // positive | neutral | negative | mixed
+  intent          String?                        // buy | inquire | complain | support | chat
+  urgency         String?                        // low | medium | high | critical
+
+  // AI analysis
+  ai_summary      String?                        // AI tóm tắt cuộc trò chuyện
+  ai_next_action  String?                        // AI gợi ý hành động tiếp
+  ai_tags         String?                        // JSON array: AI tự tag
+
+  // Stats
+  total_messages  Int       @default(0)
+  inbound_count   Int       @default(0)          // Khách gửi
+  outbound_count  Int       @default(0)          // Mình gửi
+  first_message_at DateTime?
+  last_message_at DateTime?
+  last_inbound_at DateTime?                      // Khách nhắn lần cuối
+
+  // Campaign liên kết
+  campaign_id     String?
+
+  // Tài khoản Zalo nào đang chat
+  zalo_account_id String?
+
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  contact         CrmContact @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+  zalo_account    CrmZaloAccount? @relation(fields: [zalo_account_id], references: [id])
+  messages        CrmMessage[]
+
+  @@index([contact_id, channel])
+  @@index([status])
+  @@index([channel, last_message_at])
+  @@index([campaign_id])
+  @@index([zalo_account_id])
+  @@map("hub_crm_conversations")
+}
+
+// Từng tin nhắn
+model CrmMessage {
+  id              String    @id @default(cuid())
+  conversation_id String
+  direction       String                         // inbound | outbound
+  content         String                         // Nội dung tin nhắn
+  content_type    String    @default("text")     // text | image | file | sticker | link | voice
+
+  // Trên nền tảng gốc
+  platform_message_id String?                    // ID tin nhắn trên Zalo/FB...
+  platform_timestamp  DateTime?                  // Thời gian trên nền tảng
+
+  // AI analysis
+  ai_sentiment    String?                        // positive | neutral | negative
+  ai_intent       String?                        // buy | ask_price | complain | greeting | goodbye
+  ai_keywords     String?                        // JSON array: từ khóa trích xuất
+
+  // Status
+  status          String    @default("sent")     // sent | delivered | read | failed | pending
+  error_message   String?
+
+  // Nếu outbound — template nào / AI generate
+  template_id     String?
+  is_ai_generated Boolean   @default(false)
+  ai_model_used   String?                        // "deepseek-v3-2", "kimi-k2.5"
+
+  // Metadata
+  metadata        String?                        // JSON: attachments, reactions, reply_to...
+
+  created_at      DateTime  @default(now())
+
+  conversation    CrmConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id, created_at])
+  @@index([direction, created_at])
+  @@map("hub_crm_messages")
+}
+
+// Chiến dịch outreach
+model CrmCampaign {
+  id              String    @id @default(cuid())
+  name            String                         // "Chung cư Bắc Ninh tháng 4"
+  description     String?
+  type            String    @default("outreach") // outreach | follow_up | nurture | broadcast
+  channel         String    @default("zalo")     // zalo | email | facebook | multi
+
+  // Template tin nhắn
+  message_template String?                       // Template với {{variables}}
+  message_template_followup String?              // Tin nhắn follow-up
+  knowledge_doc_ids String?                      // JSON array: knowledge docs dùng cho AI reply
+
+  // Target
+  target_tags     String?                        // JSON array: tags để lọc contacts
+  target_sources  String?                        // JSON array: sources để lọc
+  target_statuses String?                        // JSON array: lead_status để lọc
+
+  // Schedule
+  send_start_time String?                        // "09:00" — giờ bắt đầu gửi
+  send_end_time   String?                        // "17:00" — giờ kết thúc
+  messages_per_day Int     @default(50)          // Giới hạn tin/ngày (tránh ban)
+  delay_between_ms Int     @default(5000)        // Delay giữa 2 tin (ms)
+
+  // Tài khoản Zalo nào gửi
+  zalo_account_id String?
+
+  // Status
+  status          String   @default("draft")     // draft | active | paused | completed | cancelled
+  started_at      DateTime?
+  completed_at    DateTime?
+
+  // Stats
+  total_contacts  Int       @default(0)
+  sent_count      Int       @default(0)
+  delivered_count Int       @default(0)
+  replied_count   Int       @default(0)
+  hot_count       Int       @default(0)          // Leads chuyển HOT
+  converted_count Int       @default(0)          // Đã chốt deal
+  failed_count    Int       @default(0)
+  reply_rate      Float?                         // % reply
+  conversion_rate Float?                         // % chốt deal
+
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  zalo_account    CrmZaloAccount? @relation(fields: [zalo_account_id], references: [id])
+  contacts        CrmCampaignContact[]
+
+  @@index([status])
+  @@index([channel, status])
+  @@index([zalo_account_id])
+  @@map("hub_crm_campaigns")
+}
+
+// Liên kết campaign ↔ contact
+model CrmCampaignContact {
+  id              String    @id @default(cuid())
+  campaign_id     String
+  contact_id      String
+
+  // Status trong campaign
+  status          String    @default("pending")  // pending | sent | replied | hot | converted | failed | skipped
+  sent_at         DateTime?
+  replied_at      DateTime?
+  converted_at    DateTime?
+
+  // Tin nhắn đã gửi trong campaign này
+  messages_sent   Int       @default(0)
+  last_message_at DateTime?
+
+  // Ghi chú
+  notes           String?
+
+  campaign        CrmCampaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  contact         CrmContact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@unique([campaign_id, contact_id])
+  @@index([campaign_id, status])
+  @@index([contact_id])
+  @@map("hub_crm_campaign_contacts")
+}
+
+// Tài khoản Zalo — mỗi account = 1 "nhân viên" với vai trò riêng
+model CrmZaloAccount {
+  id                  String    @id @default(cuid())
+  zalo_id             String    @unique              // Zalo user ID (từ zca-js login)
+  name                String                         // "Sale BĐS", "CSKH", "Nội bộ"
+  phone               String?                        // SĐT đăng ký Zalo
+  avatar_url          String?
+
+  // === Vai trò ===
+  role                String    @default("sale")     // sale | support | internal | broadcast | general
+  description         String?                        // Mô tả chi tiết vai trò
+
+  // === AI Personality ===
+  ai_personality      String?                        // "Nhiệt tình, tư vấn BĐS, thân thiện"
+  ai_system_prompt    String?                        // System prompt riêng cho account này
+  ai_tone             String?                        // formal | friendly | casual | professional
+
+  // === Knowledge scope ===
+  knowledge_scope     String?                        // JSON array: ["sales_script", "product"] — dùng docs nào
+  knowledge_doc_ids   String?                        // JSON array: ID cụ thể nếu cần
+
+  // === Giới hạn ===
+  max_messages_per_day Int     @default(50)          // Giới hạn tin/ngày (tránh ban)
+  max_new_contacts_per_day Int @default(30)          // Giới hạn chào khách mới/ngày
+  delay_between_ms    Int      @default(5000)        // Delay giữa 2 tin (ms)
+  working_hours_start String?  @default("08:00")     // Giờ bắt đầu làm việc
+  working_hours_end   String?  @default("21:00")     // Giờ kết thúc
+
+  // === Session ===
+  session_status      String   @default("logged_out") // logged_in | expired | logged_out
+  session_data        String?                        // Encrypted credentials (cookie, imei, ua)
+  last_login_at       DateTime?
+  last_active_at      DateTime?
+
+  // === Stats ===
+  total_messages_today Int    @default(0)
+  total_contacts_assigned Int @default(0)
+  total_conversations Int     @default(0)
+
+  // === Meta ===
+  is_active           Boolean  @default(true)
+  is_default          Boolean  @default(false)       // Account mặc định
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  // Relations
+  conversations       CrmConversation[]
+  campaigns           CrmCampaign[]
+  contacts_assigned   CrmContact[]
+
+  @@index([role, is_active])
+  @@index([session_status])
+  @@map("hub_crm_zalo_accounts")
+}
+
+// Nhóm Zalo (quét được)
+model CrmZaloGroup {
+  id              String    @id @default(cuid())
+  group_id        String?   @unique              // Zalo group ID
+  group_name      String?
+  group_link      String?                        // https://zalo.me/g/xxx
+  total_members   Int?
+  description     String?
+  avatar_url      String?
+
+  // Scan info
+  scan_status     String    @default("pending")  // pending | scanning | completed | failed
+  scanned_at      DateTime?
+  members_found   Int       @default(0)
+
+  // Meta
+  added_by        String?                        // user | hub_auto
+  notes           String?
+  is_active       Boolean   @default(true)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  @@index([scan_status])
+  @@map("hub_crm_zalo_groups")
+}
+
+// Lịch sử hoạt động trên contact (audit trail)
+model CrmActivity {
+  id          String    @id @default(cuid())
+  contact_id  String
+  type        String                             // message_sent | message_received | status_changed | tag_added | note_added | campaign_added | score_updated
+  description String                             // "Gửi tin nhắn qua Zalo", "Lead status: new → warm"
+  details     String?                            // JSON: chi tiết thêm
+  performed_by String?                           // "hub_auto" | "user" | "zalo-outreach"
+
+  created_at  DateTime  @default(now())
+
+  contact     CrmContact @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@index([contact_id, created_at])
+  @@index([type])
+  @@map("hub_crm_activities")
+}
+
+// ============================================
+// CHAT HISTORY
+// ============================================
+
+// Chat history (Hub AI conversations)
+model ChatMessage {
+  id         String   @id @default(cuid())
+  role       String                          // user, assistant, system
+  content    String
+  metadata   String?                         // JSON: tools called, app responses
+  created_at DateTime @default(now())
+
+  @@index([created_at])
+  @@map("hub_chat_messages")
+}

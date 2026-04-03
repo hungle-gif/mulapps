@@ -1,0 +1,348 @@
+{
+  "id": "zalo-outreach",
+  "name": "Zalo Outreach",
+  "version": "1.0.0",
+  "description": "Quét thành viên nhóm Zalo (không cần tham gia) và tự động nhắn tin chào mời sản phẩm. Theo dõi hội thoại, phân loại mức độ quan tâm.",
+  "icon": "/assets/icon.svg",
+  "author": {
+    "name": "Hub Team",
+    "email": "team@example.com"
+  },
+  "license": "MIT",
+
+  "protocol_version": "1.0",
+  "base_url": "http://localhost:3010",
+  "health_endpoint": "/health",
+
+  "capabilities": [
+    {
+      "id": "scan-group-members",
+      "name": "Quét thành viên nhóm Zalo",
+      "description": "Quét toàn bộ thành viên từ link nhóm Zalo mà KHÔNG cần tham gia nhóm. Hỗ trợ nhóm private nếu có link mời.",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["group_links"],
+        "properties": {
+          "group_links": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^https://zalo\\.me/g/.+$"
+            },
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "Danh sách link nhóm Zalo cần quét (https://zalo.me/g/XXXXXXXXX)"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "ID tài khoản Zalo dùng để quét (nếu có nhiều tài khoản)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "groups_scanned": { "type": "integer" },
+          "total_members_found": { "type": "integer" },
+          "unique_members": { "type": "integer" },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "group_id": { "type": "string" },
+                "group_name": { "type": "string" },
+                "group_link": { "type": "string" },
+                "total_members": { "type": "integer" },
+                "members_extracted": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "estimated_duration": 30000,
+      "is_async": true,
+      "rate_limit": {
+        "max_requests": 5,
+        "window_seconds": 60
+      }
+    },
+    {
+      "id": "send-outreach-message",
+      "name": "Gửi tin nhắn chào mời",
+      "description": "Gửi tin nhắn cá nhân đến 1 contact cụ thể. Hỗ trợ template với biến động ({tên}, {nhóm}).",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["contact_id", "message"],
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "ID contact trong hệ thống"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Nội dung tin nhắn (hỗ trợ biến: {tên}, {nhóm})"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "ID tài khoản Zalo dùng để gửi"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "sent": { "type": "boolean" },
+          "message_id": { "type": "string" },
+          "sent_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false,
+      "rate_limit": {
+        "max_requests": 2,
+        "window_seconds": 60
+      }
+    },
+    {
+      "id": "run-campaign",
+      "name": "Chạy chiến dịch nhắn tin hàng loạt",
+      "description": "Tạo và chạy chiến dịch gửi tin nhắn đến danh sách contact. Có delay giữa mỗi tin, giới hạn/ngày, lịch gửi.",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["campaign_name", "contact_ids", "template_id"],
+        "properties": {
+          "campaign_name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "contact_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Danh sách contact ID cần gửi"
+          },
+          "template_id": {
+            "type": "string",
+            "description": "ID template tin nhắn"
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "delay_min_seconds": { "type": "integer", "default": 30, "minimum": 15 },
+              "delay_max_seconds": { "type": "integer", "default": 120, "minimum": 30 },
+              "max_per_day": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 },
+              "active_hours_start": { "type": "string", "default": "08:00", "pattern": "^\\d{2}:\\d{2}$" },
+              "active_hours_end": { "type": "string", "default": "21:00", "pattern": "^\\d{2}:\\d{2}$" },
+              "account_id": { "type": "string" }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "campaign_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "running", "paused", "completed", "failed"] },
+          "total_contacts": { "type": "integer" },
+          "estimated_completion": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 60000,
+      "is_async": true,
+      "rate_limit": {
+        "max_requests": 3,
+        "window_seconds": 300
+      }
+    },
+    {
+      "id": "get-campaign-stats",
+      "name": "Thống kê chiến dịch",
+      "description": "Lấy thống kê chi tiết của 1 chiến dịch: đã gửi, đã đọc, đã reply, quan tâm, không quan tâm.",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["campaign_id"],
+        "properties": {
+          "campaign_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "campaign_id": { "type": "string" },
+          "campaign_name": { "type": "string" },
+          "status": { "type": "string" },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "pending": { "type": "integer" },
+              "sent": { "type": "integer" },
+              "replied": { "type": "integer" },
+              "interested": { "type": "integer" },
+              "not_interested": { "type": "integer" },
+              "blocked": { "type": "integer" },
+              "failed": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "estimated_duration": 2000,
+      "is_async": false,
+      "rate_limit": {
+        "max_requests": 30,
+        "window_seconds": 60
+      }
+    },
+    {
+      "id": "export-contacts",
+      "name": "Xuất danh sách contacts",
+      "description": "Xuất danh sách contacts ra CSV/JSON. Hỗ trợ lọc theo nhóm, trạng thái, tag.",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "format": { "type": "string", "enum": ["csv", "json"], "default": "csv" },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "group_ids": { "type": "array", "items": { "type": "string" } },
+              "statuses": { "type": "array", "items": { "type": "string" } },
+              "tags": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_url": { "type": "string" },
+          "total_exported": { "type": "integer" },
+          "format": { "type": "string" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false,
+      "rate_limit": {
+        "max_requests": 5,
+        "window_seconds": 60
+      }
+    },
+    {
+      "id": "get-scoring-stats",
+      "name": "Báo cáo scoring hội thoại",
+      "description": "Lấy tổng quan đánh giá: bao nhiêu HOT, WARM, COLD, CONVERTED. Top hot leads.",
+      "category": "analysis",
+      "input_schema": { "type": "object", "properties": {} },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "total": { "type": "integer" },
+          "by_status": { "type": "object" },
+          "conversion_rate": { "type": "string" },
+          "hot_leads": { "type": "array" }
+        }
+      },
+      "estimated_duration": 2000,
+      "is_async": false
+    },
+    {
+      "id": "get-leads-by-status",
+      "name": "Danh sách leads theo trạng thái",
+      "description": "Lấy danh sách contacts theo lead_status: hot, warm, cold, dead, converted.",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "enum": ["hot", "warm", "cold", "dead", "converted"] },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer" },
+          "leads": { "type": "array" }
+        }
+      },
+      "estimated_duration": 2000,
+      "is_async": false
+    },
+    {
+      "id": "get-conversation-detail",
+      "name": "Chi tiết hội thoại + scoring",
+      "description": "Xem chi tiết 1 cuộc hội thoại: lịch sử tin nhắn, điểm scoring, buying/rejection signals.",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["conversation_id"],
+        "properties": {
+          "conversation_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "contact": { "type": "object" },
+          "scores": { "type": "object" },
+          "messages": { "type": "array" }
+        }
+      },
+      "estimated_duration": 2000,
+      "is_async": false
+    }
+  ],
+
+  "tags": ["zalo", "outreach", "messaging", "crm", "group-scanning", "automation", "scoring"],
+  "category": "marketing",
+
+  "ui": {
+    "dashboard_widget": {
+      "url": "/embed/widget",
+      "default_width": 400,
+      "default_height": 350
+    },
+    "full_page": {
+      "url": "/embed/full"
+    },
+    "settings_page": {
+      "url": "/embed/settings"
+    }
+  },
+
+  "permissions": [
+    "network:outbound",
+    "storage:local",
+    "hub:user-info",
+    "hub:notifications"
+  ],
+
+  "events": {
+    "emits": [
+      "zalo:group-scanned",
+      "zalo:campaign-started",
+      "zalo:campaign-completed",
+      "zalo:message-sent",
+      "zalo:reply-received",
+      "zalo:contact-interested",
+      "zalo:score-updated",
+      "zalo:lead-hot",
+      "zalo:lead-converted",
+      "zalo:account-warning"
+    ],
+    "subscribes": [
+      "hub:user-registered"
+    ]
+  },
+
+  "dependencies": {
+    "optional": [],
+    "required": []
+  }
+}

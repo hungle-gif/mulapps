@@ -1,0 +1,639 @@
+{
+  "id": "social-manager",
+  "name": "Social Manager",
+  "version": "0.4.0",
+  "description": "App con thao tác browser MXH + GitHub + HuggingFace + TopCV + Gmail — đăng bài, scrape data, trả lời, tuyển dụng, email. Mọi quyết định AI + lên lịch do Hub xử lý.",
+  "icon": "/assets/icon.svg",
+  "author": {
+    "name": "Operis Team",
+    "email": "staff@operis.vn"
+  },
+  "license": "MIT",
+
+  "protocol_version": "1.0",
+  "base_url": "http://localhost:3001",
+  "health_endpoint": "/health",
+
+  "capabilities": [
+    {
+      "id": "post-content",
+      "name": "Đăng bài lên MXH",
+      "description": "Nhận nội dung từ Hub → mở browser → đăng lên nền tảng → trả kết quả về Hub",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "content"],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "enum": ["x.com", "tiktok", "youtube", "instagram", "linkedin", "threads", "topcv"]
+          },
+          "content": {
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+              "text": { "type": "string", "description": "Nội dung bài (Hub đã soạn sẵn, kể cả AI)" },
+              "media_paths": { "type": "array", "items": { "type": "string" } },
+              "hashtags": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "post_id": { "type": "string" },
+          "post_url": { "type": "string", "format": "uri" },
+          "platform": { "type": "string" },
+          "published_at": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["published", "failed"] }
+        }
+      },
+      "estimated_duration": 10000,
+      "is_async": false
+    },
+    {
+      "id": "scrape-timeline",
+      "name": "Scrape timeline / feed",
+      "description": "Mở browser → scrape bài viết trên feed → trả data thô về Hub để Hub phân tích",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "username": { "type": "string", "description": "Scrape profile cụ thể. Bỏ trống = home feed" },
+          "limit": { "type": "integer", "default": 10, "maximum": 50 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "post_url": { "type": "string" },
+                "author": { "type": "string" },
+                "handle": { "type": "string" },
+                "text": { "type": "string" },
+                "posted_at": { "type": "string", "format": "date-time" },
+                "likes": { "type": "integer" },
+                "comments": { "type": "integer" },
+                "shares": { "type": "integer" },
+                "views": { "type": "integer" },
+                "engagement_rate": { "type": "number" }
+              }
+            }
+          },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "scrape-trending",
+      "name": "Scrape trending topics",
+      "description": "Mở browser → scrape trending/hashtags → trả data thô về Hub",
+      "category": "monitoring",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "limit": { "type": "integer", "default": 20, "maximum": 50 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "platform": { "type": "string" },
+          "trends": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank": { "type": "integer" },
+                "topic": { "type": "string" },
+                "category": { "type": "string" },
+                "post_count": { "type": "string" }
+              }
+            }
+          },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "scrape-comments",
+      "name": "Scrape bình luận trên bài đăng",
+      "description": "Mở browser → scrape tất cả comments/replies → trả data thô về Hub để Hub quyết định trả lời gì",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "post_url"],
+        "properties": {
+          "platform": { "type": "string" },
+          "post_url": { "type": "string", "format": "uri" },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "post_url": { "type": "string" },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author": { "type": "string" },
+                "handle": { "type": "string" },
+                "text": { "type": "string" },
+                "time": { "type": "string", "format": "date-time" },
+                "comment_url": { "type": "string" }
+              }
+            }
+          },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "scrape-messages",
+      "name": "Scrape tin nhắn DM",
+      "description": "Mở browser → scrape danh sách conversations + tin nhắn mới → trả về Hub",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "conversation_id": { "type": "string", "description": "Lấy chi tiết 1 conversation. Bỏ trống = danh sách tất cả" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "conversations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contact_name": { "type": "string" },
+                "last_message": { "type": "string" },
+                "unread": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "reply-comment",
+      "name": "Trả lời bình luận",
+      "description": "Nhận nội dung reply từ Hub (Hub đã dùng AI soạn) → mở browser → đăng reply",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "comment_url", "reply_text"],
+        "properties": {
+          "platform": { "type": "string" },
+          "comment_url": { "type": "string", "format": "uri", "description": "URL comment cần reply" },
+          "reply_text": { "type": "string", "description": "Nội dung reply (Hub đã soạn sẵn)" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "reply_url": { "type": "string" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "send-message",
+      "name": "Gửi tin nhắn DM",
+      "description": "Nhận nội dung tin nhắn từ Hub → mở browser → gửi DM",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "conversation_id", "text"],
+        "properties": {
+          "platform": { "type": "string" },
+          "conversation_id": { "type": "string" },
+          "text": { "type": "string", "description": "Nội dung tin nhắn (Hub đã soạn sẵn)" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "update-profile",
+      "name": "Cập nhật profile",
+      "description": "Nhận thông tin mới từ Hub → mở browser → cập nhật profile",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "name": { "type": "string" },
+          "bio": { "type": "string" },
+          "location": { "type": "string" },
+          "website": { "type": "string", "format": "uri" },
+          "avatar_path": { "type": "string" },
+          "banner_path": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "updated_fields": { "type": "array", "items": { "type": "string" } },
+          "profile_url": { "type": "string", "format": "uri" }
+        }
+      },
+      "estimated_duration": 10000,
+      "is_async": false
+    },
+    {
+      "id": "scrape-profile",
+      "name": "Scrape thông tin profile",
+      "description": "Mở browser → scrape profile data → trả về Hub",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "username": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "handle": { "type": "string" },
+          "bio": { "type": "string" },
+          "followers": { "type": "integer" },
+          "following": { "type": "integer" },
+          "posts_count": { "type": "integer" },
+          "joined": { "type": "string" },
+          "profile_url": { "type": "string", "format": "uri" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "search-content",
+      "name": "Tìm kiếm nội dung",
+      "description": "Mở browser → search trên MXH → trả kết quả thô về Hub",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "query"],
+        "properties": {
+          "platform": { "type": "string" },
+          "query": { "type": "string" },
+          "type": { "type": "string", "enum": ["posts", "people", "media", "latest"], "default": "posts" },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "post_url": { "type": "string" },
+                "author": { "type": "string" },
+                "text": { "type": "string" },
+                "likes": { "type": "integer" },
+                "shares": { "type": "integer" },
+                "views": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "do-engagement",
+      "name": "Thực hiện tương tác",
+      "description": "Hub quyết định like/repost/bookmark/follow → app con thực hiện trên browser",
+      "category": "management",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "action", "target_url"],
+        "properties": {
+          "platform": { "type": "string" },
+          "action": { "type": "string", "enum": ["like", "unlike", "repost", "bookmark", "follow", "unfollow"] },
+          "target_url": { "type": "string", "format": "uri", "description": "URL bài viết hoặc profile" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "action": { "type": "string" },
+          "target_url": { "type": "string" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "check-session",
+      "name": "Kiểm tra session đăng nhập",
+      "description": "Kiểm tra browser còn đăng nhập hay session đã hết hạn",
+      "category": "monitoring",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "logged_in": { "type": "boolean" },
+          "username": { "type": "string" },
+          "session_status": { "type": "string", "enum": ["active", "expired", "requires_2fa"] }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    },
+    {
+      "id": "health-check-selectors",
+      "name": "Kiểm tra selectors",
+      "description": "Test tất cả selectors của 1 nền tảng → báo Hub cái nào hỏng → tự sửa nếu được",
+      "category": "monitoring",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string" },
+          "auto_heal": { "type": "boolean", "default": true }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "total": { "type": "integer" },
+          "active": { "type": "integer" },
+          "degraded": { "type": "integer" },
+          "broken": { "type": "integer" },
+          "healed": { "type": "integer" },
+          "details": { "type": "array" }
+        }
+      },
+      "estimated_duration": 30000,
+      "is_async": true
+    },
+    {
+      "id": "get-transcript",
+      "name": "Lấy transcript video YouTube",
+      "description": "Mở video → lấy toàn bộ transcript (phụ đề) với timestamps",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "video_url"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["youtube"] },
+          "video_url": { "type": "string", "format": "uri" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "available": { "type": "boolean" },
+          "segments": { "type": "array" },
+          "full_text": { "type": "string" },
+          "chapters": { "type": "array" }
+        }
+      },
+      "estimated_duration": 15000,
+      "is_async": false
+    },
+    {
+      "id": "get-video-details",
+      "name": "Lấy chi tiết video YouTube",
+      "description": "Mở video → scrape title, description, views, likes, channel info",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "video_url"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["youtube"] },
+          "video_url": { "type": "string", "format": "uri" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "views": { "type": "string" },
+          "likes": { "type": "string" },
+          "channel": { "type": "string" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "get-channel-analytics",
+      "name": "Lấy analytics kênh YouTube",
+      "description": "Mở YouTube Studio → scrape subscribers, views 28d, watch hours",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["youtube"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subscribers": { "type": "string" },
+          "views_28d": { "type": "string" },
+          "watch_hours_28d": { "type": "string" },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 10000,
+      "is_async": false
+    },
+    {
+      "id": "get-recommended-cvs",
+      "name": "Lấy CV được đề xuất (TopCV)",
+      "description": "Mở TopCV → scrape danh sách CV được hệ thống gợi ý",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["topcv"] },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "candidates": { "type": "array" },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "get-cv-details",
+      "name": "Xem chi tiết CV ứng viên (TopCV)",
+      "description": "Mở TopCV → scrape toàn bộ thông tin 1 CV: kinh nghiệm, kỹ năng, học vấn",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform", "cv_id"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["topcv"] },
+          "cv_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" },
+          "title": { "type": "string" },
+          "experience": { "type": "array" },
+          "education": { "type": "array" },
+          "skills": { "type": "array" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    },
+    {
+      "id": "get-recruitment-report",
+      "name": "Báo cáo tuyển dụng (TopCV)",
+      "description": "Mở TopCV → scrape report: tổng ứng viên, tỷ lệ chuyển đổi, nguồn CV",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["topcv"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "total_applications": { "type": "integer" },
+          "total_views": { "type": "integer" },
+          "conversion_rate": { "type": "number" },
+          "top_sources": { "type": "array" },
+          "scraped_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "estimated_duration": 10000,
+      "is_async": false
+    },
+    {
+      "id": "read-email",
+      "name": "Đọc nội dung email (Gmail)",
+      "description": "Mở Gmail → click email theo index → scrape nội dung đầy đủ",
+      "category": "analysis",
+      "input_schema": {
+        "type": "object",
+        "required": ["platform"],
+        "properties": {
+          "platform": { "type": "string", "enum": ["gmail"] },
+          "index": { "type": "integer", "default": 0, "description": "Vị trí email trong inbox (0 = mới nhất)" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": { "type": "string" },
+          "sender": { "type": "string" },
+          "senderEmail": { "type": "string" },
+          "date": { "type": "string" },
+          "body": { "type": "string" },
+          "attachments": { "type": "array" }
+        }
+      },
+      "estimated_duration": 8000,
+      "is_async": false
+    }
+  ],
+
+  "tags": ["social-media", "automation", "browser", "scraper", "engagement", "recruitment", "email"],
+  "category": "social",
+
+  "ui": {
+    "dashboard_widget": { "url": "/embed/widget", "default_width": 400, "default_height": 300 },
+    "full_page": { "url": "/embed/full" },
+    "settings_page": { "url": "/embed/settings" }
+  },
+
+  "permissions": [
+    "network:outbound",
+    "storage:local",
+    "hub:user-info",
+    "hub:notifications",
+    "hub:storage"
+  ],
+
+  "events": {
+    "emits": [
+      "social:post-published",
+      "social:post-failed",
+      "social:new-comments-found",
+      "social:new-messages-found",
+      "social:metrics-scraped",
+      "social:trending-scraped",
+      "social:selector-healed",
+      "social:selector-broken",
+      "social:session-expired"
+    ],
+    "subscribes": [
+      "hub:schedule-scrape",
+      "hub:schedule-post",
+      "hub:schedule-reply",
+      "hub:ai-reply-ready",
+      "hub:ai-content-ready"
+    ]
+  },
+
+  "dependencies": {
+    "optional": [],
+    "required": []
+  }
+}

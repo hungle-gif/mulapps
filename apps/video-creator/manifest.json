@@ -1,0 +1,91 @@
+{
+  "id": "video-creator",
+  "name": "Video Creator",
+  "version": "1.0.0",
+  "description": "Tạo video chuyên nghiệp bằng code. Hub AI viết Remotion TSX + voice script → app render thành MP4 với voice tiếng Việt.",
+  "icon": "/assets/icon.svg",
+  "author": { "name": "Hub Team" },
+  "license": "MIT",
+  "protocol_version": "1.0",
+  "base_url": "http://localhost:3020",
+  "health_endpoint": "/health",
+
+  "capabilities": [
+    {
+      "id": "render-video",
+      "name": "Render video từ code",
+      "description": "Nhận Remotion TSX code + voice scripts → render thành MP4 có voice tiếng Việt. Hub AI viết code, app chỉ render.",
+      "category": "generation",
+      "input_schema": {
+        "type": "object",
+        "required": ["code", "voice_scripts"],
+        "properties": {
+          "code": { "type": "string", "description": "Full Remotion TSX code cho video component" },
+          "voice_scripts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "text": { "type": "string" },
+                "voice": { "type": "string", "default": "vi-VN-NamMinhNeural" },
+                "rate": { "type": "string", "default": "+5%" },
+                "pitch": { "type": "string", "default": "+0Hz" }
+              }
+            }
+          },
+          "composition_id": { "type": "string", "default": "TikTokVideo" },
+          "width": { "type": "integer", "default": 1080 },
+          "height": { "type": "integer", "default": 1920 },
+          "fps": { "type": "integer", "default": 30 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "video_url": { "type": "string" },
+          "duration_seconds": { "type": "number" },
+          "file_size_bytes": { "type": "integer" }
+        }
+      },
+      "estimated_duration": 120000,
+      "is_async": true
+    },
+    {
+      "id": "generate-voice",
+      "name": "Tạo voice từ text",
+      "description": "Chuyển văn bản thành giọng nói tiếng Việt (Edge-TTS). Trả file audio MP3.",
+      "category": "generation",
+      "input_schema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string" },
+          "voice": { "type": "string", "default": "vi-VN-NamMinhNeural" },
+          "rate": { "type": "string", "default": "+5%" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "audio_url": { "type": "string" },
+          "duration_seconds": { "type": "number" }
+        }
+      },
+      "estimated_duration": 5000,
+      "is_async": false
+    }
+  ],
+
+  "tags": ["video", "tiktok", "remotion", "voice", "tts", "content"],
+  "category": "content",
+
+  "permissions": ["network:outbound", "storage:local"],
+
+  "events": {
+    "emits": ["video:render-started", "video:render-complete", "video:render-failed"],
+    "subscribes": []
+  },
+
+  "dependencies": { "optional": [], "required": [] }
+}

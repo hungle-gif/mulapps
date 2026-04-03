@@ -1,0 +1,62 @@
+/*
+ * Design Tokens — Light Theme
+ * Copy vào src/app/globals.css hoặc import trong layout
+ *
+ * Sử dụng: var(--bg-base), var(--text-primary), var(--border-default)...
+ */
+
+:root,
+:root[data-theme="light"],
+.light {
+  /* Background */
+  --bg-base: #ffffff;
+  --bg-elevated: #f9fafb;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f3f4f6;
+  --bg-overlay: rgba(0, 0, 0, 0.4);
+  --bg-glass: rgba(255, 255, 255, 0.8);
+  --bg-subtle: rgba(0, 0, 0, 0.03);
+
+  /* Text */
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+  --text-disabled: #d1d5db;
+  --text-inverse: #ffffff;
+
+  /* Border */
+  --border-default: #e5e7eb;
+  --border-hover: #d1d5db;
+  --border-active: #6366f1;
+  --border-subtle: #f3f4f6;
+
+  /* Primary */
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-active: #4338ca;
+  --primary-subtle: rgba(99, 102, 241, 0.08);
+
+  /* Semantic */
+  --success: #059669;
+  --success-subtle: rgba(5, 150, 105, 0.08);
+  --warning: #d97706;
+  --warning-subtle: rgba(217, 119, 6, 0.08);
+  --error: #dc2626;
+  --error-subtle: rgba(220, 38, 38, 0.08);
+  --info: #2563eb;
+  --info-subtle: rgba(37, 99, 235, 0.08);
+
+  /* Shadow */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-dropdown: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --shadow-modal: 0 10px 25px rgba(0, 0, 0, 0.15);
+  --shadow-glow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+}

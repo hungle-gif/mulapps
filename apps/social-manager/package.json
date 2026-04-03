@@ -1,0 +1,22 @@
+{
+  "name": "@hub/social-manager",
+  "version": "0.1.0",
+  "description": "Social Manager plugin — quản lý và tự động hóa MXH",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "chrome-remote-interface": "^0.33.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0",
+    "vitest": "^2.0.0"
+  }
+}

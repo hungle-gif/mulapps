@@ -1,0 +1,20 @@
+{
+  "name": "design-to-code-scripts",
+  "type": "module",
+  "private": true,
+  "description": "Scripts for Stitch design → React conversion and visual testing",
+  "scripts": {
+    "stitch": "bash stitch.sh",
+    "convert": "node convert-to-react.mjs",
+    "visual-test": "node visual-test.mjs",
+    "extract-tokens": "node convert-to-react.mjs --extract-tokens"
+  },
+  "dependencies": {
+    "@google/stitch-sdk": "^0.0.3"
+  },
+  "devDependencies": {
+    "pixelmatch": "^6.0.0",
+    "playwright": "^1.49.0",
+    "pngjs": "^7.0.0"
+  }
+}

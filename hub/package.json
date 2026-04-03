@@ -1,0 +1,28 @@
+{
+  "name": "hub",
+  "version": "1.0.0",
+  "description": "Hub Trung Tâm — Bộ não AI điều phối các app con",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@prisma/client": "^6.4.0",
+    "hono": "^4.6.0",
+    "nanoid": "^5.0.0",
+    "openai": "^6.33.0",
+    "puppeteer": "^24.40.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prisma": "^6.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

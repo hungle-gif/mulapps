@@ -1,0 +1,30 @@
+{
+  "name": "video-creator",
+  "version": "1.0.0",
+  "description": "Headless video creation service — AI writes Remotion code, app renders MP4 with voice",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "tsx src/test-render.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@remotion/bundler": "^4.0.438",
+    "@remotion/cli": "^4.0.438",
+    "@remotion/renderer": "^4.0.438",
+    "@types/react": "^19.2.14",
+    "hono": "^4.6.0",
+    "nanoid": "^5.0.0",
+    "puppeteer": "^24.40.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.438",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0"
+  }
+}

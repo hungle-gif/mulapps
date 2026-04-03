@@ -1,0 +1,575 @@
+// ============================================
+// Zalo Outreach — Database Schema
+// ============================================
+// Core: zca-js (unofficial Zalo API)
+// ORM: Prisma + SQLite (local) / PostgreSQL (production)
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// 1. ZALO ACCOUNTS — Tài khoản Zalo đăng nhập
+// ============================================
+model ZaloAccount {
+  id         String   @id @default(cuid())
+  zalo_id    String   @unique                // Zalo user ID
+  name       String                           // Tên hiển thị trên Zalo
+  phone      String?                          // Số điện thoại (nếu lấy được)
+  avatar     String?                          // URL avatar
+
+  // Session credentials (encrypted at rest)
+  cookie     String                           // Zalo Web cookie (encrypted)
+  imei       String                           // z_uuid / IMEI (encrypted)
+  user_agent String                           // Browser User-Agent
+
+  // Status
+  status     String   @default("active")      // active | expired | banned | disconnected
+  is_default Boolean  @default(false)         // Tài khoản mặc định
+
+  // Tracking
+  last_active_at DateTime?                    // Lần cuối dùng
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  // Relations
+  scan_jobs        ScanJob[]
+  campaigns        Campaign[]
+  sent_messages    Message[]
+  conversations    Conversation[]
+
+  @@map("zalo_accounts")
+}
+
+// ============================================
+// 2. GROUPS — Nhóm Zalo đã quét
+// ============================================
+model Group {
+  id          String   @id @default(cuid())
+  zalo_group_id String @unique               // Zalo internal group ID
+  name        String                          // Tên nhóm
+  description String?                         // Mô tả nhóm
+  avatar      String?                         // URL avatar nhóm
+  link        String                          // Link mời: https://zalo.me/g/XXXXXXXXX
+  type        String?                         // Loại nhóm
+  sub_type    String?                         // Sub-type
+
+  // Stats
+  total_members    Int      @default(0)       // Tổng thành viên (từ Zalo API)
+  extracted_members Int     @default(0)       // Số thành viên đã quét được
+
+  // Creator & Admins
+  creator_zalo_id String?                     // Zalo ID người tạo nhóm
+  admin_zalo_ids  String?                     // JSON array admin IDs
+
+  // Status
+  status      String   @default("active")     // active | link_expired | archived
+  last_scanned_at DateTime?                   // Lần quét gần nhất
+
+  // Metadata
+  notes       String?                         // Ghi chú nội bộ
+  metadata    String?                         // JSON metadata mở rộng
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  deleted_at  DateTime?                       // Soft delete
+
+  // Relations
+  contact_groups ContactGroup[]
+  scan_jobs      ScanJob[]
+  campaigns      Campaign[]
+
+  @@map("groups")
+}
+
+// ============================================
+// 3. CONTACTS — Thành viên quét được
+// ============================================
+model Contact {
+  id              String   @id @default(cuid())
+  zalo_id         String   @unique            // Zalo user ID
+  display_name    String                       // Tên hiển thị (dName)
+  zalo_name       String?                      // Tên Zalo (zaloName)
+  avatar          String?                      // URL avatar
+  avatar_small    String?                      // URL avatar nhỏ (avatar_25)
+  phone           String?                      // SĐT (nếu lấy được)
+  account_status  Int?                         // Trạng thái tài khoản Zalo
+
+  // Outreach status
+  outreach_status String   @default("new")
+  // new          — Mới quét, chưa làm gì
+  // pending      — Đang chờ gửi tin nhắn
+  // sent         — Đã gửi tin nhắn, chưa rep
+  // replied      — Đã rep (chưa phân loại)
+  // interested   — Quan tâm (hỏi thêm, muốn mua)
+  // not_interested — Không quan tâm (từ chối)
+  // blocked      — Đã block mình hoặc mình block
+  // converted    — Đã chuyển đổi (mua hàng, đăng ký...)
+
+  // Scoring
+  interest_score  Int      @default(0)        // 0-100, đánh giá mức độ quan tâm
+
+  // Tags & Notes
+  tags            String?                      // JSON array tags: ["vip", "hot-lead"]
+  notes           String?                      // Ghi chú nội bộ
+
+  // Tracking
+  first_seen_at   DateTime @default(now())    // Lần đầu quét được
+  last_contacted_at DateTime?                 // Lần cuối nhắn tin
+  last_replied_at   DateTime?                 // Lần cuối họ rep
+
+  // Metadata
+  metadata    String?                         // JSON metadata mở rộng
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  deleted_at  DateTime?
+
+  // Relations
+  contact_groups   ContactGroup[]
+  campaign_contacts CampaignContact[]
+  messages         Message[]
+  conversations    Conversation[]
+  scores           ConversationScore[]
+
+  @@index([outreach_status])
+  @@index([interest_score])
+  @@map("contacts")
+}
+
+// ============================================
+// 4. CONTACT_GROUPS — Liên kết Contact ↔ Group (N:N)
+// ============================================
+model ContactGroup {
+  id         String   @id @default(cuid())
+  contact_id String
+  group_id   String
+  role       String   @default("member")      // member | admin | creator
+  joined_at  DateTime?                        // Thời gian vào nhóm (nếu biết)
+  scanned_at DateTime @default(now())         // Thời gian quét được
+
+  contact    Contact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+  group      Group    @relation(fields: [group_id], references: [id], onDelete: Cascade)
+
+  @@unique([contact_id, group_id])
+  @@map("contact_groups")
+}
+
+// ============================================
+// 5. SCAN JOBS — Lịch sử quét nhóm
+// ============================================
+model ScanJob {
+  id          String   @id @default(cuid())
+  account_id  String                          // Tài khoản Zalo dùng để quét
+  group_id    String?                         // Nhóm (set sau khi quét xong)
+  group_link  String                          // Link nhóm đầu vào
+
+  // Progress
+  status      String   @default("queued")     // queued | scanning | completed | failed | cancelled
+  progress    Int      @default(0)            // 0-100%
+  current_page Int     @default(0)            // mpage hiện tại
+  total_pages  Int?                           // Tổng số trang (nếu biết)
+
+  // Results
+  members_found    Int  @default(0)           // Số thành viên tìm được
+  new_members      Int  @default(0)           // Số thành viên mới (chưa có trong DB)
+  duplicate_members Int @default(0)           // Số thành viên đã có
+
+  // Error
+  error_message String?                       // Chi tiết lỗi nếu failed
+
+  // Timing
+  started_at   DateTime?
+  completed_at DateTime?
+  created_at   DateTime @default(now())
+
+  account      ZaloAccount @relation(fields: [account_id], references: [id])
+  group        Group?      @relation(fields: [group_id], references: [id])
+
+  @@index([status])
+  @@map("scan_jobs")
+}
+
+// ============================================
+// 6. TEMPLATES — Mẫu tin nhắn
+// ============================================
+model Template {
+  id          String   @id @default(cuid())
+  name        String                          // Tên template
+  content     String                          // Nội dung, hỗ trợ biến:
+  // {tên}     — Tên hiển thị contact
+  // {nhóm}    — Tên nhóm mà contact đến từ
+  // {sản_phẩm} — Tên sản phẩm (từ campaign)
+
+  // Variants — Nhiều phiên bản tránh bị detect spam
+  variants    String?                         // JSON array nội dung thay thế
+  // Khi gửi, random chọn 1 variant → giảm rủi ro bị Zalo detect
+
+  // Categorization
+  category    String   @default("general")    // general | greeting | follow_up | promotion | closing
+  is_active   Boolean  @default(true)
+
+  // Stats
+  times_used  Int      @default(0)
+  reply_rate  Float?                          // % người reply khi dùng template này
+
+  // Metadata
+  notes       String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  deleted_at  DateTime?
+
+  campaigns   Campaign[]
+
+  @@map("templates")
+}
+
+// ============================================
+// 7. CAMPAIGNS — Chiến dịch nhắn tin
+// ============================================
+model Campaign {
+  id          String   @id @default(cuid())
+  name        String                          // Tên chiến dịch
+  description String?                         // Mô tả
+
+  account_id  String                          // Tài khoản Zalo dùng gửi
+  template_id String                          // Template tin nhắn
+  group_id    String?                         // Nhóm mục tiêu (nếu campaign gắn với 1 nhóm)
+
+  // Settings
+  delay_min_seconds  Int @default(30)         // Delay tối thiểu giữa mỗi tin (giây)
+  delay_max_seconds  Int @default(120)        // Delay tối đa
+  max_per_day        Int @default(50)         // Giới hạn tin nhắn/ngày
+  active_hours_start String @default("08:00") // Bắt đầu gửi từ giờ nào
+  active_hours_end   String @default("21:00") // Dừng gửi lúc mấy giờ
+
+  // Status
+  status      String   @default("draft")
+  // draft      — Đang soạn, chưa chạy
+  // queued     — Đã lên lịch, chờ chạy
+  // running    — Đang gửi
+  // paused     — Tạm dừng (user hoặc hệ thống)
+  // completed  — Đã gửi hết
+  // failed     — Lỗi nghiêm trọng, dừng hẳn
+  // cancelled  — User hủy
+
+  // Progress
+  total_contacts     Int @default(0)          // Tổng contact trong campaign
+  sent_count         Int @default(0)          // Đã gửi
+  replied_count      Int @default(0)          // Đã reply
+  interested_count   Int @default(0)          // Quan tâm
+  not_interested_count Int @default(0)        // Không quan tâm
+  failed_count       Int @default(0)          // Gửi lỗi
+  blocked_count      Int @default(0)          // Bị block
+
+  // Schedule
+  scheduled_at DateTime?                      // Hẹn giờ bắt đầu
+  started_at   DateTime?                      // Thời gian bắt đầu thật
+  completed_at DateTime?                      // Thời gian hoàn thành
+  paused_at    DateTime?                      // Thời gian tạm dừng
+
+  // Error
+  last_error   String?                        // Lỗi gần nhất
+
+  // Metadata
+  notes        String?
+  metadata     String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  deleted_at   DateTime?
+
+  account      ZaloAccount @relation(fields: [account_id], references: [id])
+  template     Template    @relation(fields: [template_id], references: [id])
+  group        Group?      @relation(fields: [group_id], references: [id])
+  campaign_contacts CampaignContact[]
+
+  @@index([status])
+  @@map("campaigns")
+}
+
+// ============================================
+// 8. CAMPAIGN_CONTACTS — Contact trong Campaign
+// ============================================
+model CampaignContact {
+  id          String   @id @default(cuid())
+  campaign_id String
+  contact_id  String
+
+  // Status trong campaign này
+  status      String   @default("pending")
+  // pending        — Chờ gửi
+  // queued         — Đã vào hàng đợi
+  // sending        — Đang gửi
+  // sent           — Đã gửi thành công
+  // delivered      — Đã nhận (nếu Zalo trả delivery status)
+  // replied        — Đã reply
+  // interested     — Quan tâm
+  // not_interested — Không quan tâm
+  // blocked        — Bị block
+  // failed         — Gửi lỗi
+  // skipped        — Bỏ qua (đã liên hệ trước đó / trùng)
+
+  // Message sent
+  message_content String?                     // Nội dung tin nhắn đã gửi (sau khi thay biến)
+  message_variant Int?                        // Variant index đã dùng
+
+  // Timing
+  scheduled_at DateTime?                      // Hẹn gửi lúc nào
+  sent_at      DateTime?                      // Đã gửi lúc nào
+  replied_at   DateTime?                      // Đã reply lúc nào
+
+  // Retry
+  retry_count  Int      @default(0)           // Số lần thử lại
+  last_error   String?                        // Lỗi gần nhất
+
+  // Metadata
+  notes        String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  campaign     Campaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  contact      Contact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@unique([campaign_id, contact_id])
+  @@index([status])
+  @@map("campaign_contacts")
+}
+
+// ============================================
+// 9. MESSAGES — Lịch sử tin nhắn
+// ============================================
+model Message {
+  id              String   @id @default(cuid())
+  account_id      String                      // Tài khoản Zalo gửi
+  contact_id      String                      // Gửi cho ai
+  conversation_id String?                     // Thuộc cuộc hội thoại nào
+
+  // Content
+  direction       String                      // outbound | inbound
+  content         String                      // Nội dung tin nhắn
+  message_type    String   @default("text")   // text | image | sticker | file | link
+
+  // Zalo tracking
+  zalo_message_id String?                     // Message ID từ Zalo (nếu có)
+
+  // Status
+  status          String   @default("sent")   // sent | delivered | read | failed
+  error_message   String?
+
+  // Metadata
+  metadata        String?                     // JSON (reactions, attachments...)
+  created_at      DateTime @default(now())
+
+  account         ZaloAccount  @relation(fields: [account_id], references: [id])
+  contact         Contact      @relation(fields: [contact_id], references: [id])
+  conversation    Conversation? @relation(fields: [conversation_id], references: [id])
+
+  @@index([contact_id, created_at])
+  @@index([conversation_id])
+  @@map("messages")
+}
+
+// ============================================
+// 10. CONVERSATIONS — Quản lý hội thoại
+// ============================================
+model Conversation {
+  id          String   @id @default(cuid())
+  account_id  String                          // Tài khoản Zalo
+  contact_id  String                          // Hội thoại với ai
+
+  // Status
+  status      String   @default("active")     // active | archived | blocked
+
+  // Stats
+  total_messages   Int @default(0)
+  outbound_count   Int @default(0)            // Số tin mình gửi
+  inbound_count    Int @default(0)            // Số tin họ gửi
+  last_message_at  DateTime?
+  last_outbound_at DateTime?
+  last_inbound_at  DateTime?
+
+  // Context
+  first_contact_campaign_id String?           // Campaign nào liên hệ đầu tiên
+  notes       String?
+
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  account     ZaloAccount @relation(fields: [account_id], references: [id])
+  contact     Contact     @relation(fields: [contact_id], references: [id])
+  messages    Message[]
+  score       ConversationScore?
+
+  @@unique([account_id, contact_id])
+  @@index([status])
+  @@map("conversations")
+}
+
+// ============================================
+// 11. CONVERSATION SCORING — Đánh giá hội thoại tự động
+// ============================================
+model ConversationScore {
+  id              String   @id @default(cuid())
+  conversation_id String   @unique
+  contact_id      String
+
+  // Scoring (0-100)
+  interest_score  Int      @default(0)     // Mức quan tâm tổng
+  intent_score    Int      @default(0)     // Ý định mua/đăng ký
+  engagement_score Int     @default(0)     // Mức tương tác (reply nhanh, dài, nhiều)
+  sentiment_score  Int     @default(50)    // Cảm xúc (0=tiêu cực, 50=trung lập, 100=tích cực)
+
+  // Classification
+  lead_status     String   @default("new")
+  // new           — Chưa đánh giá
+  // hot           — Rất quan tâm (hỏi giá, muốn mua, yêu cầu tư vấn)
+  // warm          — Đang tìm hiểu (hỏi thêm, chưa quyết)
+  // cold          — Ít quan tâm (rep ngắn, lạnh nhạt)
+  // dead          — Không quan tâm (từ chối, không rep > 48h)
+  // converted     — Đã chốt đơn / đăng ký thành công
+
+  // Signals detected
+  buying_signals    String?  // JSON: ["hỏi giá", "muốn xem demo", "gửi địa chỉ"]
+  rejection_signals String?  // JSON: ["không cần", "đừng nhắn nữa", "block"]
+
+  // Response metrics
+  avg_reply_time_seconds Int?   // Thời gian reply TB (giây)
+  reply_rate            Float?  // % tin nhắn được reply
+  total_words_received  Int     @default(0)  // Tổng từ khách gửi
+  longest_message_chars Int     @default(0)  // Tin nhắn dài nhất (quan tâm = viết dài)
+
+  // AI analysis
+  ai_summary       String?  // Tóm tắt cuộc trò chuyện bởi AI
+  ai_next_action    String?  // AI suggest: follow_up | close_deal | wait | stop
+  ai_analyzed_at    DateTime? // Lần cuối AI phân tích
+
+  // Timestamps
+  first_reply_at    DateTime? // Lần đầu khách reply
+  last_activity_at  DateTime? // Hoạt động cuối
+  scored_at         DateTime  @default(now()) // Lần cuối scoring
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+
+  @@index([lead_status])
+  @@index([interest_score])
+  @@index([last_activity_at])
+  @@map("conversation_scores")
+}
+
+// ============================================
+// 12. MESSAGE QUEUE — Hàng đợi tin nhắn (100 concurrent)
+// ============================================
+model MessageQueue {
+  id          String   @id @default(cuid())
+  account_id  String
+  contact_id  String
+
+  // Content
+  content     String                       // Nội dung tin nhắn
+  message_type String  @default("text")    // text | image | sticker
+
+  // Priority & Scheduling
+  priority    Int      @default(5)         // 1=cao nhất, 10=thấp nhất
+  scheduled_at DateTime?                   // Hẹn gửi
+
+  // Status
+  status      String   @default("pending")
+  // pending    — Chờ xử lý
+  // processing — Đang gửi
+  // sent       — Gửi thành công
+  // failed     — Lỗi
+  // cancelled  — Đã hủy
+  // expired    — Quá hạn gửi
+
+  // Retry
+  retry_count Int      @default(0)
+  max_retries Int      @default(3)
+  last_error  String?
+
+  // Source tracking
+  source      String   @default("campaign")  // campaign | auto_reply | manual | hub
+  source_id   String?                        // ID campaign/task gốc
+
+  // Timing
+  processed_at DateTime?
+  created_at   DateTime  @default(now())
+
+  @@index([status, priority, scheduled_at])
+  @@index([account_id, status])
+  @@map("message_queue")
+}
+
+// ============================================
+// 13. ACTIVITY LOG — Lịch sử hoạt động
+// ============================================
+model ActivityLog {
+  id          String   @id @default(cuid())
+  action      String                       // scan | send | receive | score | campaign_start...
+  entity_type String                       // contact | group | campaign | conversation
+  entity_id   String?
+  details     String?                      // JSON chi tiết
+  created_at  DateTime @default(now())
+
+  @@index([action, created_at])
+  @@index([entity_type, entity_id])
+  @@map("activity_logs")
+}
+
+// ============================================
+// 14. KNOWLEDGE BASE — Kho kiến thức cho AI
+// ============================================
+model KnowledgeDoc {
+  id          String   @id @default(cuid())
+
+  // Phân loại
+  category    String                       // identity | sales_script | product | faq | objection | policy | other
+  title       String                       // Tiêu đề
+  content     String                       // Nội dung chi tiết
+
+  // Search
+  tags        String?                      // JSON array: ["giá", "chung cư", "bắc ninh"]
+  keywords    String?                      // Từ khóa trigger: khi khách nhắn chứa từ này → load doc này
+
+  // Priority
+  priority    Int      @default(5)         // 1=cao nhất, luôn load. 10=thấp, chỉ load khi match keyword
+  is_active   Boolean  @default(true)
+
+  // Metadata
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([category, is_active])
+  @@index([priority])
+  @@map("knowledge_docs")
+}
+
+// ============================================
+// 15. SETTINGS — Cài đặt app
+// ============================================
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique                        // Tên setting
+  value String                                // JSON value
+  // Keys dự kiến:
+  // default_delay_min       — Delay mặc định min (giây)
+  // default_delay_max       — Delay mặc định max
+  // default_max_per_day     — Max tin nhắn/ngày mặc định
+  // default_active_hours    — Khung giờ gửi mặc định
+  // auto_classify_replies   — Tự động phân loại reply (bool)
+  // notification_on_reply   — Thông báo khi có reply (bool)
+  // safety_mode             — Chế độ an toàn (conservative/normal/aggressive)
+  // hub_token               — Token kết nối với Hub
+  // webhook_secret          — Secret verify webhook
+
+  updated_at DateTime @updatedAt
+
+  @@map("settings")
+}

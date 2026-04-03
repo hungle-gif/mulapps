@@ -1,0 +1,36 @@
+{
+  "name": "zalo-outreach",
+  "version": "1.0.0",
+  "description": "Headless Zalo outreach service — scan group members & auto-message",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "worker": "tsx watch src/workers/index.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@prisma/client": "^6.4.0",
+    "bullmq": "^5.30.0",
+    "hono": "^4.6.0",
+    "ioredis": "^5.4.0",
+    "nanoid": "^5.0.0",
+    "openai": "^6.33.0",
+    "ws": "^8.18.0",
+    "zca-js": "^2.1.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "prisma": "^6.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
