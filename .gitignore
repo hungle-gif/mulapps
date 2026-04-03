@@ -41,6 +41,10 @@ desktop.ini
 
 # Prisma
 prisma/migrations/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
 
 # Puppeteer / browser cache
 .local-chromium/
